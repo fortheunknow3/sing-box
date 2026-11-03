@@ -34,7 +34,8 @@ jobs:
       - name: Install and update archive tests
         run: bash tests/test-install.sh
   release:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Manual dispatch is a read-only test run; releases follow pushes only.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     permissions:
