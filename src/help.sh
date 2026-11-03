@@ -39,6 +39,17 @@ show_help() {
             # "   seed [name] [seed | auto]                       更改 mKCP seed"
             "   new [name] [...]                                更改协议"
             "   web [name] [domain]                             更改伪装网站\n"
+            "HY2 (Hysteria2):"
+            "   add hy2 [port] [password] [options]             添加 HY2 (原有位置参数兼容)"
+            "   --obfs off|salamander|gecko                      混淆类型，默认 off"
+            "   --obfs-password <password|auto>                  混淆密码，auto 随机生成"
+            "   --initial-packet-size <auto|1200-1452>           初始 QUIC 报文大小，单位字节"
+            "   --mtu-discovery <on|off|auto>                     路径 MTU 探测 (off 写入 disable=true)"
+            "   --disable-path-mtu-discovery <true|false|auto>    与核心字段同义的开关"
+            "   obfs [name] [off|salamander|gecko] [password|auto] 更改混淆"
+            "   packet-size [name] [auto|1200-1452]               更改初始报文大小"
+            "   mtu-discovery [name] [on|off|auto]                更改 MTU 探测"
+            "   报文大小、MTU 开关和 Gecko 需要核心 >= 1.14.0；参数支持 gen/full。\n"
             "进阶:"
             "   dns [...]                                       设置 DNS"
             "   dd, ddel [name...]                              删除多个配置**"
@@ -72,7 +83,7 @@ show_help() {
         done
         msg "谨慎使用 del, ddel, 此选项会直接删除配置; 无需确认"
         msg "反馈问题) $(msg_ul https://github.com/${is_sh_repo}/issues) "
-        msg "文档(doc) $(msg_ul https://233boy.com/$is_core/$is_core-script/)"
+        msg "本分支文档(doc) $(msg_ul https://github.com/${is_sh_repo}#readme)"
         ;;
 
     esac

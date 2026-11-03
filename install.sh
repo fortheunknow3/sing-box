@@ -70,7 +70,7 @@ is_conf_dir=$is_core_dir/conf
 is_log_dir=/var/log/$is_core
 is_sh_bin=/usr/local/bin/$is_core
 is_sh_dir=$is_core_dir/sh
-is_sh_repo=$author/$is_core
+is_sh_repo=fortheunknow3/$is_core
 is_pkg="wget tar bash"
 # Alpine: gcompat provides glibc compatibility for prebuilt binaries
 [[ $cmd =~ apk ]] && is_pkg="$is_pkg gcompat jq"
@@ -177,7 +177,8 @@ download() {
         is_ok=$is_core_ok
         ;;
     sh)
-        link=https://github.com/${is_sh_repo}/releases/latest/download/code.tar.gz
+        # A fork can be installed before GitHub Actions has published a release.
+        link=https://github.com/${is_sh_repo}/archive/refs/heads/main.tar.gz
         name="$is_core_name 脚本"
         tmpfile=$tmpsh
         is_ok=$is_sh_ok
@@ -196,6 +197,16 @@ download() {
             mv -f $tmpfile $is_ok
         fi
     }
+}
+
+# Install the same source-archive layout used by one-command and local installs.
+install_script_files() {
+    if [[ $local_install ]]; then
+        cp -rf "$PWD/"* "$is_sh_dir/" || return 1
+    else
+        tar zxf "$is_sh_ok" --strip-components 1 -C "$is_sh_dir" || return 1
+    fi
+    [[ -f $is_sh_dir/sing-box.sh && -f $is_sh_dir/src/core.sh && -f $is_sh_dir/src/hysteria2.sh ]] || return 1
 }
 
 # get server ip
@@ -319,7 +330,7 @@ main() {
     }
 
     # check parameters
-    [[ $# -gt 0 ]] && pass_args $@
+    [[ $# -gt 0 ]] && pass_args "$@"
 
     # show welcome msg
     clear
@@ -405,11 +416,7 @@ main() {
     mkdir -p $is_sh_dir
 
     # copy sh file or unzip sh zip file.
-    if [[ $local_install ]]; then
-        cp -rf $PWD/* $is_sh_dir
-    else
-        tar zxf $is_sh_ok -C $is_sh_dir
-    fi
+    install_script_files || exit_and_del_tmpdir
 
     # create core bin dir
     mkdir -p $is_core_dir/bin
@@ -458,4 +465,4 @@ main() {
 }
 
 # start.
-main $@
+main "$@"

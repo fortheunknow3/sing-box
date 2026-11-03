@@ -6,7 +6,12 @@ get_latest_version() {
         ;;
     sh)
         name="$is_core_name 脚本"
-        url="https://api.github.com/repos/$is_sh_repo/releases/latest?v=$RANDOM"
+        # Track this fork's main branch without requiring a release workflow.
+        is_sh_ref=refs/heads/main
+        latest_ver=$(_wget -qO- "https://raw.githubusercontent.com/$is_sh_repo/main/sing-box.sh" |
+            sed -n 's/^is_sh_ver=\(v[0-9.]*\)$/\1/p')
+        [[ $latest_ver ]] || { err "获取 ${name} 最新版本失败."; return 1; }
+        return
         ;;
     caddy)
         name="Caddy"
@@ -40,10 +45,14 @@ download() {
     sh)
         name="$is_core_name 脚本"
         tmpfile=$tmpdir/sh.tar.gz
-        link="https://github.com/${is_sh_repo}/releases/download/${latest_ver}/code.tar.gz"
+        link="https://github.com/${is_sh_repo}/archive/${is_sh_ref:-refs/tags/$latest_ver}.tar.gz"
         download_file
-        tar zxf $tmpfile -C $is_sh_dir
-        chmod +x $is_sh_bin ${is_sh_bin/$is_core/sb}
+        tar zxf "$tmpfile" --strip-components 1 -C "$is_sh_dir" || {
+            rm -rf "$tmpdir"
+            err "脚本压缩包解压失败."
+            return 1
+        }
+        chmod +x "$is_sh_bin" "${is_sh_bin%/*}/sb"
         ;;
     caddy)
         name="Caddy"

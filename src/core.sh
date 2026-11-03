@@ -1,5 +1,7 @@
 #!/bin/bash
 
+load hysteria2.sh
+
 protocol_list=(
     TUIC
     Trojan
@@ -83,6 +85,9 @@ change_list=(
     "更改 SNI (serverName)"
     "更改伪装网站"
     "更改用户名 (Username)"
+    "更改 HY2 混淆"
+    "更改 HY2 初始报文大小"
+    "更改 HY2 路径 MTU 探测"
 )
 servername_list=(
     www.amazon.com
@@ -158,17 +163,12 @@ get_pbk() {
 }
 
 show_list() {
-    PS3=''
-    COLUMNS=1
-    select i in "$@"; do echo; done &
-    wait
-    # i=0
-    # for v in "$@"; do
-    #     ((i++))
-    #     echo "$i) $v"
-    # done
-    # echo
-
+    # Rendering a menu must not consume answers intended for ask/read.
+    local index=0 item
+    for item in "$@"; do
+        printf '%s) %s\n' "$((++index))" "$item"
+    done
+    printf '\n'
 }
 
 is_test() {
@@ -269,7 +269,7 @@ ask() {
     [[ $is_tmp_list ]] && show_list "${is_tmp_list[@]}"
     while :; do
         echo -ne $is_opt_input_msg
-        read REPLY
+        read -r REPLY || { err "输入已结束，操作取消."; return 1; }
         [[ ! $REPLY && $is_emtpy_exit ]] && exit
         [[ ! $REPLY && $is_default_arg ]] && export $is_ask_set=$is_default_arg && break
         [[ "$REPLY" == "${is_str}2${is_get}3${is_opt}3" && $is_ask_set == 'is_main_pick' ]] && {
@@ -342,10 +342,30 @@ create() {
             msg
             return
         }
-        # del old file
-        [[ $is_config_file ]] && is_no_del_msg=1 && del $is_config_file
-        # save json to file
-        cat <<<$is_new_json >$is_json_file
+        if [[ $net == hysteria2 ]]; then
+            # Validate before replacing an existing node. Do not leave
+            # partial/invalid JSON in the conf dir.
+            local hy2_tmp
+            hy2_tmp=$(mktemp "$is_conf_dir/.hy2.XXXXXX") || return 1
+            chmod 600 "$hy2_tmp"
+            printf '%s\n' "$is_new_json" >"$hy2_tmp"
+            if ! "$is_core_bin" check -c "$hy2_tmp"; then
+                rm -f "$hy2_tmp"
+                err "HY2 配置检查失败，原配置未更改."
+                return 1
+            fi
+            if ! mv -f "$hy2_tmp" "$is_json_file"; then
+                rm -f "$hy2_tmp"
+                err "HY2 配置保存失败，原配置未更改."
+                return 1
+            fi
+            [[ $is_config_file && $is_config_file != "$is_config_name" ]] && is_no_del_msg=1 && del "$is_config_file"
+        else
+            # del old file
+            [[ $is_config_file ]] && is_no_del_msg=1 && del "$is_config_file"
+            # save json to file
+            cat <<<$is_new_json >$is_json_file
+        fi
         if [[ $is_new_install ]]; then
             # config.json
             create config.json
@@ -439,6 +459,15 @@ change() {
         web | proxy-site)
             is_change_id=11
             ;;
+        obfs)
+            is_change_id=13
+            ;;
+        packet-size | initial-packet-size)
+            is_change_id=14
+            ;;
+        mtu-discovery)
+            is_change_id=15
+            ;;
         *)
             [[ $is_try_change ]] && return
             err "无法识别 ($2) 更改类型."
@@ -474,12 +503,12 @@ change() {
     }
     case $is_change_id in
     full)
-        add $net ${@:3}
+        add "$net" "${@:3}"
         ;;
     0)
         # new protocol
         is_set_new_protocol=1
-        add ${@:3}
+        add "${@:3}"
         ;;
     1)
         # new port
@@ -499,7 +528,7 @@ change() {
             manage restart caddy &
             info
         else
-            add $net $is_new_port
+            add "$net" "$is_new_port"
         fi
         ;;
     2)
@@ -646,6 +675,25 @@ change() {
         [[ ! $is_socks_user ]] && err "($is_config_file) 不支持更改用户名 (Username)."
         ask string is_socks_user "请输入新用户名 (Username):"
         add $net
+        ;;
+    13 | 14 | 15)
+        [[ $net == hysteria2 ]] || { err "($is_config_file) 仅 HY2 支持此选项."; return 1; }
+        case $is_change_id in
+        13)
+            if [[ $3 ]]; then hy2_set_obfs "$3" "$4" || return 1
+            else hy2_prompt_obfs || return 1; fi
+            ;;
+        14)
+            if [[ $3 ]]; then hy2_set_packet_size "$3" || return 1
+            else hy2_prompt_packet_size || return 1; fi
+            ;;
+        15)
+            if [[ $3 ]]; then hy2_set_mtu_discovery "$3" || return 1
+            else hy2_prompt_mtu_discovery || return 1; fi
+            ;;
+        esac
+        hy2_require_supported || return 1
+        add hy2
         ;;
     esac
 }
@@ -856,7 +904,15 @@ add() {
         is_use_uuid=$3
         is_add_opts="[port] [uuid]"
         ;;
-    trojan* | hysteria*)
+    hysteria*)
+        [[ $is_change ]] || hy2_options='{}'
+        hy2_parse_args "${@:2}" || return 1
+        set -- "$1" "${hy2_args[@]}"
+        is_use_port=$2
+        is_use_pass=$3
+        is_add_opts="[port] [password] [--obfs off|salamander|gecko] [--obfs-password password|auto] [--initial-packet-size auto|1200-1452] [--mtu-discovery on|off|auto]"
+        ;;
+    trojan*)
         is_use_port=$2
         is_use_pass=$3
         is_add_opts="[port] [password]"
@@ -1031,6 +1087,14 @@ add() {
                 # set password
                 [[ ! $ss_password ]] && ask string ss_password "请设置密码:"
                 ;;
+            hysteria2)
+                if [[ ! $is_change ]]; then
+                    hy2_prompt_obfs || return 1
+                    hy2_prompt_packet_size || return 1
+                    hy2_prompt_mtu_discovery || return 1
+                    hy2_require_supported || return 1
+                fi
+                ;;
             esac
 
         fi
@@ -1072,7 +1136,7 @@ add() {
     fi
 
     # create json
-    create server $is_new_protocol
+    create server "$is_new_protocol" || return 1
 
     # show config info.
     info
@@ -1110,20 +1174,25 @@ get() {
     info)
         get file $2
         if [[ $is_config_file ]]; then
-            is_json_str=$(cat $is_conf_dir/"$is_config_file" | sed s#//.*##)
-            is_json_data=$(jq '(.inbounds[0]|.type,.listen_port,(.users[0]|.uuid,.password,.username),.method,.password,.override_port,.override_address,(.transport|.type,.path,.headers.host),(.tls|.server_name,.reality.private_key)),(.outbounds[1].tag)' <<<$is_json_str)
+            # Prefer real JSON; the legacy comment fallback must not strip
+            # https:// or // inside passwords in normal JSON configurations.
+            is_json_str=$(jq -c . "$is_conf_dir/$is_config_file" 2>/dev/null) ||
+                is_json_str=$(sed 's#//.*##' "$is_conf_dir/$is_config_file")
+            is_json_data=$(jq -r '(.inbounds[0]|.type,.listen_port,(.users[0]|.uuid,.password,.username),.method,.password,.override_port,.override_address,(.transport|.type,.path,.headers.host),(.tls|.server_name,.reality.private_key)),(.outbounds[1].tag)' <<<$is_json_str)
             [[ $? != 0 ]] && err "无法读取此文件: $is_config_file"
             is_up_var_set=(null is_protocol port uuid password username ss_method ss_password door_port door_addr net_type path host is_servername is_private_key is_public_key)
             [[ $is_debug ]] && msg "\n------------- debug: $is_config_file -------------"
             i=0
-            for v in $(sed 's/""/null/g;s/"//g' <<<"$is_json_data"); do
+            while IFS= read -r v; do
                 ((i++))
                 [[ $is_debug ]] && msg "$i-${is_up_var_set[$i]}: $v"
                 export ${is_up_var_set[$i]}="${v}"
-            done
+            done <<<"$is_json_data"
             for v in ${is_up_var_set[@]}; do
                 [[ ${!v} == 'null' ]] && unset $v
             done
+            hy2_options='{}'
+            [[ $is_protocol == hysteria2 ]] && hy2_read_options
 
             if [[ $is_private_key ]]; then
                 is_reality=1
@@ -1195,7 +1264,14 @@ get() {
             net=hysteria2
             is_protocol=$net
             [[ ! $password ]] && password=$uuid
-            json_str="users:[{password:\"$password\"}],$is_tls_json"
+            # Use jq arguments for strings rather than interpolating secrets
+            # into jq source code (quotes, backslashes and spaces are valid).
+            json_str=$(jq -c --arg password "$password" \
+                --arg key "$is_tls_key" --arg cert "$is_tls_cer" \
+                --argjson options "${hy2_options:-"{}"}" \
+                '{users:[{password:$password}],tls:{enabled:true,alpn:["h3"],
+                  key_path:$key,certificate_path:$cert}} + $options' <<<'{}') || return 1
+            json_str=${json_str:1:${#json_str}-2}
             ;;
         shadowsocks*)
             net=ss
@@ -1427,12 +1503,16 @@ info() {
         is_info_str=($is_protocol $is_addr $port $password tcp tls true)
         ;;
     hy*)
-        is_can_change=(0 1 4)
+        is_can_change=(0 1 4 13 14 15)
         is_info_show=(0 1 2 10 8 9 20)
         # fix xray core for client use.
         is_sha256=$(openssl x509 -noout -fingerprint -sha256 -in $is_core_dir/bin/tls.cer | sed 's/.*=//;s/://g')
-        is_url="$is_protocol://$password@$is_addr:$port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256#233boy-$net-$is_addr"
-        is_info_str=($is_protocol $is_addr $port $password tls h3 "true (设置, 固定证书>证书指纹(SHA-256): $is_sha256)")
+        local hy2_auth hy2_obfs_query
+        hy2_auth=$(jq -rn --arg value "$password" '$value | @uri')
+        hy2_obfs_query=$(jq -r 'if .obfs then "&obfs=" + (.obfs.type | @uri) +
+            "&obfs-password=" + (.obfs.password | @uri) else "" end' <<<"${hy2_options:-"{}"}")
+        is_url="$is_protocol://$hy2_auth@$is_addr:$port?alpn=h3&insecure=1&allowInsecure=1&pinSHA256=$is_sha256${hy2_obfs_query}#233boy-$net-$is_addr"
+        is_info_str=("$is_protocol" "$is_addr" "$port" "$password" tls h3 "true (设置, 固定证书>证书指纹(SHA-256): $is_sha256)")
         ;;
     tuic)
         is_insecure=1
@@ -1491,8 +1571,9 @@ info() {
         fi
         msg "$a $tt= \e[${is_color}m${is_info_str[$i]}\e[0m"
     done
+    [[ $net == hysteria2 ]] && hy2_show_options
     if [[ $is_new_install ]]; then
-        warn "首次安装请查看脚本帮助文档: $(msg_ul https://233boy.com/$is_core/$is_core-script/)"
+        warn "首次安装请查看脚本帮助文档: $(msg_ul https://github.com/${is_sh_repo}#readme)"
     fi
     if [[ $is_url ]]; then
         msg "------------- ${info_list[12]} -------------"
@@ -1518,7 +1599,7 @@ footer_msg() {
     unset c n m s b
     msg "------------- END -------------"
     msg "关注(tg): $(msg_ul https://t.me/tg2333)"
-    msg "文档(doc): $(msg_ul https://233boy.com/$is_core/$is_core-script/)"
+    msg "本分支文档(doc): $(msg_ul https://github.com/${is_sh_repo}#readme)"
     msg "推广(ads): 机场推荐($is_core_name services): $(msg_ul https://g${c}e${n}t${m}j${s}m${b}s.com/)\n"
     ####### 要点13脸吗只会改我链接的小人 #######
 }
@@ -1679,7 +1760,7 @@ main() {
     a | add | gen | no-auto-tls)
         [[ $1 == 'gen' ]] && is_gen=1
         [[ $1 == 'no-auto-tls' ]] && is_no_auto_tls=1
-        add ${@:2}
+        add "${@:2}"
         ;;
     bin | pbk | check | completion | format | generate | geoip | geosite | merge | rule-set | run | tools)
         is_run_command=$1
@@ -1695,7 +1776,7 @@ main() {
         _try_enable_bbr
         ;;
     c | config | change)
-        change ${@:2}
+        change "${@:2}"
         ;;
     # client | genc)
     #     create client $2
@@ -1774,7 +1855,7 @@ main() {
         log_set $2
         ;;
     url | qr)
-        url_qr $@
+        url_qr "$@"
         ;;
     un | uninstall)
         uninstall
@@ -1827,7 +1908,7 @@ main() {
         if [[ $is_change_id ]]; then
             unset is_try_change
             [[ $2 ]] && {
-                change $2 $1 ${@:3}
+                change "$2" "$1" "${@:3}"
             } || {
                 change
             }

@@ -1,31 +1,59 @@
-name: Main
+name: Test and release
 
-on: push
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: get ver
+      - uses: actions/checkout@v4
+      - name: Install test dependencies and official core
+        env:
+          CORE_VERSION: 1.14.4
         run: |
-          echo "$(cat *.sh | grep is_sh_ver=)" >> $GITHUB_ENV
-          echo "old=$(git tag | tail -n1)" >> $GITHUB_ENV
-      # - name: test
-      #   if: env.is_sh_ver == env.old 
-      #   run: |
-      #     echo not found new version.
-      #     exit 1
-      - name: tar
-        run: tar zcvf code.tar.gz ./*
-      - name: release
-        uses: softprops/action-gh-release@v1
+          sudo apt-get update
+          sudo apt-get install -y jq openssl
+          mkdir -p "$RUNNER_TEMP/sing-box-core"
+          curl -fLsS --retry 3 "https://github.com/SagerNet/sing-box/releases/download/v${CORE_VERSION}/sing-box-${CORE_VERSION}-linux-amd64.tar.gz" -o "$RUNNER_TEMP/core.tar.gz"
+          tar -xzf "$RUNNER_TEMP/core.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/sing-box-core"
+          echo "SING_BOX_BIN=$RUNNER_TEMP/sing-box-core/sing-box" >> "$GITHUB_ENV"
+      - name: Bash syntax
+        run: |
+          for file in install.sh sing-box.sh src/*.sh tests/*.sh; do
+            bash -n "$file" || exit 1
+          done
+      - name: HY2 regression tests
+        run: bash tests/test-hy2.sh
+      - name: Install and update archive tests
+        run: bash tests/test-install.sh
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version and package
+        id: package
+        run: |
+          version=$(sed -n 's/^is_sh_ver=\(v[0-9.]*\)$/\1/p' sing-box.sh)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          tar -czf code.tar.gz install.sh sing-box.sh src README.md LICENSE
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
           files: code.tar.gz
-          tag_name: ${{ env.is_sh_ver }}
+          tag_name: ${{ steps.package.outputs.version }}
+          body: |
+            HY2: configurable obfuscation, initial QUIC packet size and path MTU discovery.
+            Preserves HY2 options across port/password changes and fix operations.
+            See README for one-command installation, migration and usage.
