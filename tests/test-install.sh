@@ -68,6 +68,19 @@ download sh v1.21
 [[ $(cat "$test_root/download-url") == https://github.com/fortheunknow3/sing-box/archive/refs/tags/v1.21.tar.gz ]]
 printf 'PASS explicit version update from fork tag\n'
 
+# A successful install must exit zero; preserve failure status and cleanup.
+source <(sed -n '/^exit_and_del_tmpdir() {/,/^}/p' "$repo/install.sh")
+tmpdir=$test_root/success-exit
+mkdir "$tmpdir"
+(exit_and_del_tmpdir ok)
+[[ ! -e $tmpdir ]]
+printf 'PASS successful installation exit status\n'
+tmpdir=$test_root/failure-exit
+mkdir "$tmpdir"
+if (exit_and_del_tmpdir) >/dev/null 2>&1; then exit 1; fi
+[[ ! -e $tmpdir ]]
+printf 'PASS failed installation exit status\n'
+
 # A failed version request must not fall through to an empty download URL.
 _wget() { return 1; }
 (get_latest_version sh) >/dev/null 2>&1 && exit 1

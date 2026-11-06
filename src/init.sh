@@ -55,7 +55,7 @@ load() {
 # wget add --no-check-certificate
 _wget() {
     # [[ $proxy ]] && export https_proxy=$proxy
-    wget --no-check-certificate "$@"
+    wget --no-check-certificate --timeout=20 --tries=2 "$@"
 }
 
 # apt-get, yum, zypper or apk
