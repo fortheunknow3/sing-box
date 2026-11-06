@@ -104,7 +104,7 @@ load() {
 # wget add --no-check-certificate
 _wget() {
     [[ $proxy ]] && export https_proxy=$proxy
-    wget --no-check-certificate $*
+    wget --no-check-certificate --timeout=20 --tries=2 "$@"
 }
 
 # print a mesage
@@ -457,7 +457,7 @@ main() {
 
     load core.sh
     # create a config
-    add hy2
+    add hy2 || exit_and_del_tmpdir
     # wait for background tasks (e.g., OpenRC service start)
     wait
     # remove tmp dir and exit.

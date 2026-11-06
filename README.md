@@ -9,10 +9,14 @@
 以 **root** 运行，支持上游脚本已有的 Ubuntu、Debian、CentOS、SUSE、Alpine，架构为 amd64 或 arm64：
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/fortheunknow3/sing-box/main/install.sh)
+(tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT && wget --timeout=20 --tries=2 -O "$tmp" https://raw.githubusercontent.com/fortheunknow3/sing-box/main/install.sh && test -s "$tmp" && bash "$tmp")
 ```
 
 系统需要先有 Bash 和 wget。Alpine 可先运行 `apk add bash wget`，再进入 Bash 执行上面的命令。
+
+下载失败会显示错误并停止，不会把空内容当成安装脚本执行。旧的 `bash <(wget -qO- ...)` 写法在 DNS 或下载失败时可能表现为“无反应”；此时先检查 `getent ahostsv4 raw.githubusercontent.com` 和 `/etc/resolv.conf`，确认实际可用的 DNS，再重试。不要直接套用某个公共 DNS；不同机房的连通性可能不同。
+
+如果重启后失效，先检查 `systemctl status sing-box` 和 `journalctl -u sing-box -b`，保留配置再处理。**卸载会删除 `/etc/sing-box`，也会删除放在该目录内的备份**。卸载前应把需要保留的节点、证书和备份复制到此目录之外的受控位置。
 
 安装会自动下载官方 sing-box 核心及依赖，创建服务，并生成一个 HY2 节点。首次安装默认不启用混淆，报文大小和 MTU 探测沿用核心默认值。安装完成后用 `sb` 打开菜单，或按下文修改节点。
 
